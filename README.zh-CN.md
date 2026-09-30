@@ -6,33 +6,36 @@
 电脑主动向中继建立出站连接，无需把电脑的局域网端口暴露到互联网。一个实例可以
 服务多台电脑和手机，每个设备使用独立凭据，每份客户端登记明确绑定一台电脑。
 
-**0.1.0** 提供中继服务和本机管理 CLI。使用时需要支持中继的 Cowork 桌面与手机客户端，
+**0.1.1** 提供中继服务和本机管理 CLI。使用时需要支持中继的 Cowork 桌面与手机客户端，
 电脑还需匹配的远程服务组件；桌面 0.15.0 及更早版本不能仅填写 URL 就使用中继。
 只更新手机不会更新电脑。本地和模拟器检查不代表真实公网部署已通过验收。
 容器镜像通过仓库提供的 Dockerfile 在本地构建。
 
 ## 下载与安装
 
-从 [0.1.0 发布页](https://github.com/coworkagent/cowork-relay/releases/tag/v0.1.0)
-下载对应压缩包和 `SHA256SUMS`。仓库保持私有期间，下载需要仓库访问权限。
+从 [0.1.1 发布页](https://github.com/coworkagent/cowork-relay/releases/tag/v0.1.1)
+下载对应压缩包和 `SHA256SUMS`。
 
 | 平台 | 压缩包 | 运行要求 |
 | --- | --- | --- |
-| Linux x64 | `cowork-relay-0.1.0-linux-x64.tar.gz` | glibc 2.36+；Debian 12 / Ubuntu 24.04 或兼容系统 |
-| Linux ARM64 | `cowork-relay-0.1.0-linux-arm64.tar.gz` | glibc 2.36+；Debian 12 / Ubuntu 24.04 或兼容系统 |
-| macOS Intel | `cowork-relay-0.1.0-darwin-x64.tar.gz` | macOS 12+ |
-| macOS Apple Silicon | `cowork-relay-0.1.0-darwin-arm64.tar.gz` | macOS 12+ |
+| Linux x64 | `cowork-relay-0.1.1-linux-x64.tar.gz` | 静态 musl；不依赖系统 libc |
+| Linux ARM64 | `cowork-relay-0.1.1-linux-arm64.tar.gz` | 静态 musl；不依赖系统 libc |
+| macOS Intel | `cowork-relay-0.1.1-darwin-x64.tar.gz` | macOS 12+ |
+| macOS Apple Silicon | `cowork-relay-0.1.1-darwin-arm64.tar.gz` | macOS 12+ |
 
-按服务器架构选择。Linux 二进制动态链接 glibc，Alpine/musl 系统需要兼容构建或使用
-Docker 镜像。Mac 二进制用于开发验证，未进行 Developer ID 公证。当前不提供原生
+按服务器架构选择。从 0.1.1 起，Linux 下载包静态链接 musl，可用于 glibc 和 musl 发行版，
+不需要升级 libc 或另行安装 musl。旧版 0.1.0 下载包仍动态链接 glibc，不包含这项兼容修复。
+CI 在原生 Ubuntu 24.04 上运行发布二进制，并在 Ubuntu 20.04 与 Alpine 3.22 用户空间
+检查启动和本机管理。容器共享构建机器的内核，这不代表所有旧内核都已通过验证。
+Mac 二进制用于开发验证，未进行 Developer ID 公证。当前不提供原生
 Windows 二进制，因为本机管理依赖 Unix socket 和文件权限；可使用 Linux 服务器或虚拟机。
 
 ```sh
 # Linux 校验；macOS 使用 shasum -a 256 计算压缩包摘要，与清单对应行比较。
 sha256sum --ignore-missing -c SHA256SUMS
-tar -xzf cowork-relay-0.1.0-linux-x64.tar.gz
+tar -xzf cowork-relay-0.1.1-linux-x64.tar.gz
 mkdir -p "$HOME/.local/bin"
-install -m 0755 cowork-relay-0.1.0-linux-x64/cowork-relay "$HOME/.local/bin/cowork-relay"
+install -m 0755 cowork-relay-0.1.1-linux-x64/cowork-relay "$HOME/.local/bin/cowork-relay"
 "$HOME/.local/bin/cowork-relay" --version
 ```
 
@@ -88,6 +91,19 @@ npm run test:acceptance
 
 最后一项需要 Node.js 22.12+ 和 OpenSSL，仅使用合成设备及回环地址。
 Rust 生产服务不依赖 Node.js 或 OpenSSL。二进制位于 `target/release/cowork-relay`。
+Linux 默认源码构建使用本机 libc，并不是通用发布构建。
+
+在对应架构的 Ubuntu/Debian 机器上安装 `musl-tools`，使用 `rustup target add` 添加
+`x86_64-unknown-linux-musl` 或 `aarch64-unknown-linux-musl`，然后通过
+`CC=musl-gcc cargo build --release --locked --target TARGET` 构建；还需像
+[工作流](.github/workflows/build.yml)一样将对应 Cargo target 的 linker 设置为 `musl-gcc`。
+
+GitHub Actions 为四个平台运行格式、Clippy、Rust 测试及公开验收。Linux ELF 检查
+拒绝依赖动态加载器或共享库的二进制。PR、main 更新和手动运行会生成可下载产物；
+推送与包版本一致的 `vX.Y.Z` 标签后，只有全部平台通过才会新建 Release，不覆盖已有发布。
+压缩包内的 `BUILD.json` 记录源码提交、目标平台和二进制摘要。打包实现见
+[工作流](.github/workflows/build.yml)和 `scripts/`。Mac 构建设置 macOS 12 部署目标，
+CI 实际运行系统为 macOS 15。
 
 ## 初始化 IP 服务
 

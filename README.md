@@ -8,7 +8,7 @@ need to be exposed to the internet. One instance supports several computers and
 phones, with independent credentials and a specific computer assigned to each
 client registration.
 
-Version **0.1.0** provides the relay service and local administration CLI.
+Version **0.1.1** provides the relay service and local administration CLI.
 Use relay-capable Cowork desktop and mobile clients. The desktop integration
 requires a matching remote component; desktop 0.15.0 and older cannot use the
 relay simply by entering its URL. A mobile update alone does not update the
@@ -18,18 +18,22 @@ Container images are built locally from the included Dockerfile.
 ## Download and install
 
 Download an archive and `SHA256SUMS` from the
-[0.1.0 release](https://github.com/coworkagent/cowork-relay/releases/tag/v0.1.0).
-Repository access is required while this repository is private.
+[0.1.1 release](https://github.com/coworkagent/cowork-relay/releases/tag/v0.1.1).
 
 | Platform | Archive | Requirements |
 | --- | --- | --- |
-| Linux x64 | `cowork-relay-0.1.0-linux-x64.tar.gz` | glibc 2.36+; Debian 12 / Ubuntu 24.04 or compatible |
-| Linux ARM64 | `cowork-relay-0.1.0-linux-arm64.tar.gz` | glibc 2.36+; Debian 12 / Ubuntu 24.04 or compatible |
-| macOS Intel | `cowork-relay-0.1.0-darwin-x64.tar.gz` | macOS 12+ |
-| macOS Apple Silicon | `cowork-relay-0.1.0-darwin-arm64.tar.gz` | macOS 12+ |
+| Linux x64 | `cowork-relay-0.1.1-linux-x64.tar.gz` | Static musl; no system libc dependency |
+| Linux ARM64 | `cowork-relay-0.1.1-linux-arm64.tar.gz` | Static musl; no system libc dependency |
+| macOS Intel | `cowork-relay-0.1.1-darwin-x64.tar.gz` | macOS 12+ |
+| macOS Apple Silicon | `cowork-relay-0.1.1-darwin-arm64.tar.gz` | macOS 12+ |
 
-Choose the archive for the server's architecture. Linux binaries are dynamically
-linked to glibc; Alpine/musl systems need a compatible build or the Docker image.
+Choose the archive for the server's architecture. From 0.1.1, Linux downloads
+use statically linked musl and run on both glibc and musl distributions. No libc
+upgrade or separate musl installation is required. The older 0.1.0 downloads
+remain dynamically linked to glibc and do not have this compatibility fix.
+CI tests the release binary on native Ubuntu 24.04 runners and additionally
+checks startup and local administration in Ubuntu 20.04 and Alpine 3.22 userlands.
+Containers share the runner kernel; this does not certify every older kernel.
 Mac binaries are development utilities, without Developer ID notarization.
 Native Windows binaries are not provided because local administration requires
 Unix sockets and Unix file permissions; use a Linux server or Linux VM.
@@ -37,9 +41,9 @@ Unix sockets and Unix file permissions; use a Linux server or Linux VM.
 ```sh
 # Verify on Linux (on macOS, run shasum -a 256 on the archive and compare its entry).
 sha256sum --ignore-missing -c SHA256SUMS
-tar -xzf cowork-relay-0.1.0-linux-x64.tar.gz
+tar -xzf cowork-relay-0.1.1-linux-x64.tar.gz
 mkdir -p "$HOME/.local/bin"
-install -m 0755 cowork-relay-0.1.0-linux-x64/cowork-relay "$HOME/.local/bin/cowork-relay"
+install -m 0755 cowork-relay-0.1.1-linux-x64/cowork-relay "$HOME/.local/bin/cowork-relay"
 "$HOME/.local/bin/cowork-relay" --version
 ```
 
@@ -110,7 +114,23 @@ npm run test:acceptance
 
 The last check needs Node.js 22.12+ and OpenSSL. Its synthetic connections bind
 only loopback. Rust production code does not require Node.js or OpenSSL.
-The binary is `target/release/cowork-relay`.
+The binary is `target/release/cowork-relay`. A default Linux source build uses
+the host libc; it is not the portable release build.
+
+On a native Ubuntu/Debian machine of the desired architecture, install
+`musl-tools`, add `x86_64-unknown-linux-musl` or `aarch64-unknown-linux-musl`
+with `rustup target add`, and build with `CC=musl-gcc cargo build --release
+--locked --target TARGET`. Set the matching Cargo target linker to `musl-gcc`,
+as shown in [the workflow](.github/workflows/build.yml).
+
+GitHub Actions runs formatting, Clippy, Rust tests and the public acceptance
+suite for all four targets. Linux ELF checks reject any dynamic loader or
+shared-library dependency. PRs, main updates and manual runs produce downloadable
+artifacts; a `vX.Y.Z` tag matching the package version publishes a new release
+only after every platform passes. Existing releases are never overwritten.
+Archives include `BUILD.json` with the source commit, target and binary digest.
+See [the workflow](.github/workflows/build.yml) and `scripts/` for packaging.
+Mac builds use a macOS 12 deployment target; the CI runtime is macOS 15.
 
 ## Initialize an IP server
 

@@ -1,0 +1,139 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - platform: darwin-x64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - platform: darwin-arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+    env:
+      CARGO_TERM_COLOR: always
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+      COWORK_RELAY_BINARY: target/${{ matrix.target }}/release/cowork-relay
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install native musl compiler
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y musl-tools
+          echo 'CC=musl-gcc' >> "$GITHUB_ENV"
+          echo 'CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc' >> "$GITHUB_ENV"
+          echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc' >> "$GITHUB_ENV"
+      - name: Install pinned Rust toolchain and target
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          rustup show active-toolchain
+          rustup target add "$TARGET"
+          rustc --version
+      - name: Check formatting and lints
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets --locked --target "$TARGET" -- -D warnings
+      - name: Run Rust tests and build release binary
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          cargo test --locked --target "$TARGET"
+          cargo build --release --locked --target "$TARGET"
+      - name: Verify binary architecture and linkage
+        env:
+          TARGET: ${{ matrix.target }}
+        run: bash scripts/verify-binary.sh "$COWORK_RELAY_BINARY" "$TARGET"
+      - name: Run acceptance tests against release binary
+        run: |
+          npm ci
+          npm run test:acceptance
+      - name: Check older glibc and musl userlands
+        if: runner.os == 'Linux'
+        run: |
+          for image in ubuntu:20.04 alpine:3.22; do
+            docker run --rm --network none --read-only --cap-drop ALL \
+              --security-opt no-new-privileges --tmpfs /tmp:rw,nosuid,nodev \
+              --user 10001:10001 \
+              -v "$PWD/$COWORK_RELAY_BINARY:/relay:ro" \
+              -v "$PWD/scripts/smoke-runtime.sh:/smoke.sh:ro" \
+              "$image" sh /smoke.sh /relay
+          done
+      - name: Package verified binary
+        env:
+          TARGET: ${{ matrix.target }}
+          PLATFORM: ${{ matrix.platform }}
+        run: node scripts/package-release.mjs "$PLATFORM" "$TARGET"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Verify complete release and checksums
+        run: node scripts/verify-release.mjs
+      - name: Publish new release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/*.tar.gz dist/SHA256SUMS \
+            --verify-tag --title "Cowork Relay ${RELEASE_TAG#v}" \
+            --notes-file RELEASE_NOTES.md
