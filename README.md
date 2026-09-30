@@ -194,9 +194,9 @@ Registration returns a public device ID on stdout and writes its secret only to
 the newly created `0600` credential file. Files are never overwritten. Transfer
 each credential file privately to the matching endpoint and remove unnecessary
 server-side copies. Do not paste credentials into command arguments or logs.
-The default lifetime is 30 days; `--days` allows 1–90 days. There is no automatic
-renewal of device credentials in this version. Re-enroll before expiry; a new
-host registration requires new client registrations targeting its ID.
+The default lifetime is 30 days; `--days` allows 1–90 days. Automatic renewal is on
+by default. Use `devices renew` for manual renewal with the existing identity;
+`--auto-renew false` opts out when creating a registration.
 
 | Command | Effect |
 | --- | --- |
@@ -221,9 +221,9 @@ Data messages are bounded to 64 KiB. Idle streams close after 90 seconds and all
 streams reconnect after at most one hour. Clients must reconcile command status
 after reconnecting rather than blindly replaying uncertain mutations.
 
-Generated leaf certificates last one year; the private CA lasts ten years. To
-renew a leaf under the same CA, stop the service, run the following command and
-restart. Renewal requires `ca-key.pem`; keep an encrypted offline backup. The
+Generated leaf certificates last one year; the private CA lasts ten years. IP leaves renew automatically before expiry. To
+renew one manually under the same CA, stop the service, run the following command
+and restart. Renewal requires `ca-key.pem`; keep an encrypted offline backup. The
 public CA fingerprint is unchanged, so its imported trust remains valid.
 
 ```sh
@@ -232,8 +232,8 @@ cowork-relay --data-dir ./relay-state renew-ip
 
 Renewal writes a fresh key and certificate, then atomically selects them. Previous
 certificate files remain in the private directory for operator-managed cleanup.
-For domain certificates, renew using your certificate provider and restart the
-service. If the CA is compromised, expired or the server IP changes, provision a
+For domain certificates, renew using your certificate provider. The running
+service reloads valid replacements within one minute. If the CA is compromised, expired or the server IP changes, provision a
 new identity and explicitly distribute and verify its new trust material.
 Back up the private state securely; restoring an old device registry can undo
 later revocations. Avoid copying a live registry into a second running service.
@@ -244,3 +244,44 @@ connections; clients may reconnect once the service returns.
 
 Container and systemd templates are in [deploy](deploy/). Review paths and network
 settings before use. No public deployment is performed by these examples.
+
+## Expiry and automatic renewal
+
+New computer and phone registrations renew automatically by default. The
+server extends a registration before expiry, including after a service restart,
+without changing its ID, secret, group or target computer. Existing enabled,
+unexpired registrations adopt this default once; expired or disabled legacy
+registrations do not. Revocation and disabling always take precedence. A
+registration file contains an expiry snapshot; updated clients authenticate
+against the relay's current state instead of treating that old date as final.
+
+```sh
+cowork-relay --data-dir ./relay-state devices renew DEVICE_ID --days 30
+cowork-relay --data-dir ./relay-state devices auto-renew DEVICE_ID --enabled false
+cowork-relay --data-dir ./relay-state devices auto-renew DEVICE_ID --enabled true
+```
+
+`renew` ensures at least the selected number of days from now (1–90), retaining
+the existing secret and binding. It never enables a disabled device. Renew an
+expired registration manually before enabling its automatic policy. New
+`devices add-host` / `add-client` commands accept `--auto-renew false` for fixed
+expiry; `--days` sets the renewal period. `devices inspect` and `devices list`
+show `expiresAt`, `autoRenew` and `renewalDays`. Remove access with `disable`;
+`kick` only disconnects current streams and does not prevent renewal/reconnect.
+
+Generated IP leaf certificates renew within 30 days of expiry by default and
+reload for new connections without interrupting existing tunnels. Their CA and
+address remain unchanged, so no new registration import is needed. Set
+`autoRenewCertificate` to `false` in the private configuration to opt out.
+Domain certificates must be renewed by your certificate provider or ACME client;
+the relay reloads valid replacements every minute. `status` shows the loaded
+certificate's expiry and renewal setting. Private roots are never automatically
+replaced: a root nearing expiry requires an administrator and new trust imports.
+Keep the private CA signing key available and restrict the state directory.
+
+Use the companion renewal-capable desktop, mobile app and Server
+`0.0.6-renewal.0` or later together. This section describes unreleased source;
+existing published binaries and TestFlight builds do not gain it automatically.
+Back up the stopped private state before upgrading: the new registration format
+is not readable by older relay binaries. Restore binary and matching backup
+together if rolling back.

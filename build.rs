@@ -6,7 +6,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=vendor");
     let digests: std::collections::BTreeMap<String, String> =
         serde_json::from_slice(&fs::read("vendor/digests.json")?)?;
-    if digests.len() != 3 {
+    if digests.len() != 4 {
         return Err("Invalid protocol manifest".into());
     }
     for (path, expected) in digests {
@@ -38,6 +38,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             .ok_or("Missing relay limit")?;
         generated.push_str(&format!("pub const {constant}: usize = {value};\n"));
     }
+    let config: Value = serde_json::from_slice(&fs::read("vendor/relay/config.schema.json")?)?;
+    let status_path = config["$defs"]["registrationStatusPath"]["const"]
+        .as_str()
+        .ok_or("Missing status path")?;
+    generated.push_str(&format!(
+        "pub const REGISTRATION_STATUS_PATH: &str = {status_path:?};\n"
+    ));
     fs::write(
         Path::new(&std::env::var("OUT_DIR")?).join("relay_constants.rs"),
         generated,

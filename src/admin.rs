@@ -27,6 +27,16 @@ pub enum Command {
         group: String,
         host_id: Option<String>,
         days: u64,
+        #[serde(default = "enabled_default")]
+        auto_renew: bool,
+    },
+    Renew {
+        id: String,
+        days: u64,
+    },
+    AutoRenew {
+        id: String,
+        enabled: bool,
     },
     Kick {
         id: String,
@@ -37,6 +47,10 @@ pub enum Command {
     Enable {
         id: String,
     },
+}
+
+fn enabled_default() -> bool {
+    true
 }
 
 pub fn bind(directory: &Path) -> Result<UnixListener> {
@@ -91,7 +105,7 @@ fn execute(runtime: &Runtime, command: Command) -> Result<serde_json::Value> {
     ensure!(!runtime.shutdown.is_cancelled(), "Relay stopping");
     match command {
         Command::Status => Ok(
-            serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"protocol":crate::protocol::PROTOCOL,"origin":runtime.config.origin,"devices":core.registry.list()?.len(),"connections":core.connections().len()}),
+            serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"protocol":crate::protocol::PROTOCOL,"origin":runtime.config.origin,"devices":core.registry.list()?.len(),"connections":core.connections().len(),"certificate":runtime.certificate_status.lock().ok().map(|value|value.clone())}),
         ),
         Command::Devices => Ok(serde_json::to_value(core.list()?)?),
         Command::Connections => Ok(serde_json::to_value(core.connections())?),
@@ -107,6 +121,7 @@ fn execute(runtime: &Runtime, command: Command) -> Result<serde_json::Value> {
             group,
             host_id,
             days,
+            auto_renew,
         } => {
             let result = core.registry.add(name, role, group, host_id, days);
             let (device, secret) = match result {
@@ -116,9 +131,18 @@ fn execute(runtime: &Runtime, command: Command) -> Result<serde_json::Value> {
                     return Err(error);
                 }
             };
+            let device = if auto_renew {
+                device
+            } else {
+                core.registry.set_auto_renew(&device.id, false)?
+            };
             let trust = runtime.config.public_trust()?;
             Ok(serde_json::json!({"format":1,"relay":trust,"device":device,"secret":secret}))
         }
+        Command::Renew { id, days } => Ok(serde_json::to_value(core.registry.renew(&id, days)?)?),
+        Command::AutoRenew { id, enabled } => Ok(serde_json::to_value(
+            core.registry.set_auto_renew(&id, enabled)?,
+        )?),
         Command::Kick { id } => {
             ensure!(core.registry.device(&id).is_some(), "Unknown device");
             Ok(serde_json::json!({"id":id,"disconnected":core.kick(&id)}))

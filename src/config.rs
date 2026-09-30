@@ -21,6 +21,8 @@ use x509_parser::{extensions::GeneralName, prelude::FromDer};
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Config {
     pub format: u32,
+    #[serde(default = "default_certificate_renewal")]
+    pub auto_renew_certificate: bool,
     pub origin: String,
     pub listen: SocketAddr,
     pub certificate: PathBuf,
@@ -105,6 +107,10 @@ fn certificates(bytes: &[u8]) -> Result<Vec<CertificateDer<'static>>> {
         "Invalid certificate chain"
     );
     Ok(chain)
+}
+
+fn default_certificate_renewal() -> bool {
+    true
 }
 
 impl Config {
@@ -238,6 +244,7 @@ pub fn init_ip(directory: &Path, ip: IpAddr, port: u16, listen: SocketAddr) -> R
         &directory,
         Config {
             format: 1,
+            auto_renew_certificate: true,
             origin,
             listen,
             certificate: directory.join("server.pem"),
@@ -262,6 +269,7 @@ pub fn init_domain(
     );
     let config = Config {
         format: 1,
+        auto_renew_certificate: true,
         origin,
         listen,
         certificate: fs::canonicalize(certificate)?,
@@ -286,6 +294,10 @@ fn prepare(directory: &Path) -> Result<()> {
 pub fn renew_ip(directory: &Path) -> Result<Config> {
     // 持有设备状态锁，避免运行中的服务观察到不完整的证书切换。
     let _registry = Registry::open(directory)?;
+    renew_ip_locked(directory)
+}
+
+fn renew_ip_locked(directory: &Path) -> Result<Config> {
     let directory = fs::canonicalize(directory)?;
     let mut config = Config::load(&directory)?;
     let (_, host) = authority(&config.origin)?;
@@ -334,6 +346,53 @@ pub fn renew_ip(directory: &Path) -> Result<Config> {
     atomic_json(&directory.join("config.json"), &config)?;
     Ok(config)
 }
+// 仅持有登记锁的服务调用；只更新叶证书，不自动更换信任根或路由。
+pub fn maintain_certificate(
+    directory: &Path,
+    expected: &Config,
+    expected_trust: &serde_json::Value,
+) -> Result<Config> {
+    let mut config = Config::load(directory)?;
+    ensure!(
+        config.origin == expected.origin
+            && config.listen == expected.listen
+            && config.public_trust()? == *expected_trust,
+        "Relay identity changed; restart required"
+    );
+    if config.automatic_certificate_renewal()
+        && config.certificate_expiry()? <= crate::store::now() + 30 * 86400
+    {
+        let ca = certificates(&read_certificate(
+            config.trust_certificate.as_ref().context("Missing CA")?,
+        )?)?;
+        let (_, certificate) = x509_parser::certificate::X509Certificate::from_der(ca[0].as_ref())
+            .map_err(|_| anyhow::anyhow!("Invalid CA"))?;
+        ensure!(
+            certificate.validity().not_after.timestamp()
+                > (crate::store::now() + 31 * 86400) as i64,
+            "CA expires soon; administrator must replace trust registration"
+        );
+        config = renew_ip_locked(directory)?;
+    }
+    config.tls()?;
+    Ok(config)
+}
+
+impl Config {
+    pub fn automatic_certificate_renewal(&self) -> bool {
+        self.auto_renew_certificate
+            && self.trust_certificate.is_some()
+            && authority(&self.origin).is_ok_and(|(_, host)| host.parse::<IpAddr>().is_ok())
+    }
+
+    pub fn certificate_expiry(&self) -> Result<u64> {
+        let chain = certificates(&read_certificate(&self.certificate)?)?;
+        let (_, leaf) = x509_parser::certificate::X509Certificate::from_der(chain[0].as_ref())
+            .map_err(|_| anyhow::anyhow!("Invalid leaf certificate"))?;
+        Ok(u64::try_from(leaf.validity().not_after.timestamp())?)
+    }
+}
+
 fn save_initial(directory: &Path, config: Config) -> Result<Config> {
     config.tls()?;
     Registry::create(directory)?;
@@ -365,6 +424,45 @@ mod tests {
         );
         assert_eq!(Config::load(&path)?.certificate, renewed.certificate);
         renewed.tls()?;
+        Ok(())
+    }
+    #[test]
+    fn automatic_certificate_renewal_keeps_root_and_respects_opt_out() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("state");
+        let mut config = init_ip(&path, "127.0.0.1".parse()?, 8443, "127.0.0.1:8443".parse()?)?;
+        let trust = config.public_trust()?;
+        let _registry = Registry::open(&path)?;
+        let ca = String::from_utf8(read_private(&path.join("ca.pem"))?)?;
+        let issuer = Issuer::from_ca_cert_pem(
+            &ca,
+            KeyPair::from_pem(&String::from_utf8(read_private(&path.join("ca-key.pem"))?)?)?,
+        )?;
+        let key = KeyPair::from_pem(&String::from_utf8(read_private(&config.private_key)?)?)?;
+        let mut params = CertificateParams::new(vec!["127.0.0.1".to_string()])?;
+        params.not_before = OffsetDateTime::now_utc() - Duration::minutes(5);
+        params.not_after = OffsetDateTime::now_utc() + Duration::days(1);
+        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+        fs::write(&config.certificate, params.signed_by(&key, &issuer)?.pem())?;
+        config.auto_renew_certificate = false;
+        atomic_json(&path.join("config.json"), &config)?;
+        assert_eq!(
+            maintain_certificate(&path, &config, &trust)?.certificate,
+            config.certificate
+        );
+        config.auto_renew_certificate = true;
+        atomic_json(&path.join("config.json"), &config)?;
+        let renewed = maintain_certificate(&path, &config, &trust)?;
+        assert_ne!(renewed.certificate, config.certificate);
+        assert!(renewed.certificate_expiry()? > crate::store::now() + 300 * 86400);
+        assert_eq!(renewed.public_trust()?, trust);
+        assert_eq!(
+            maintain_certificate(&path, &config, &trust)?.certificate,
+            renewed.certificate
+        );
+        let mut changed = trust.clone();
+        changed["caSha256"] = serde_json::json!("0".repeat(64));
+        assert!(maintain_certificate(&path, &config, &changed).is_err());
         Ok(())
     }
     #[test]

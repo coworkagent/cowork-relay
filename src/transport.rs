@@ -38,13 +38,31 @@ type Reply = Response<Full<Bytes>>;
 use crate::protocol::{CONTROL_LIMIT, FRAME_LIMIT, PROTOCOL, WEBSOCKET_PROTOCOL};
 const HEADER_TIMEOUT: Duration = Duration::from_secs(5);
 
-pub async fn serve(runtime: Arc<Runtime>, listener: TcpListener) -> Result<()> {
-    let acceptor = TlsAcceptor::from(runtime.config.tls()?);
+pub async fn serve(
+    runtime: Arc<Runtime>,
+    listener: TcpListener,
+    directory: &std::path::Path,
+) -> Result<()> {
+    let mut acceptor = TlsAcceptor::from(runtime.config.tls()?);
+    let expected_trust = runtime.config.public_trust()?;
+    let mut refresh = tokio::time::interval(Duration::from_secs(60));
     let permits = Arc::new(Semaphore::new(runtime.config.limits.sockets));
     let admissions = Arc::new(Semaphore::new(64));
     loop {
         let (stream, peer) = tokio::select! {
             _ = runtime.shutdown.cancelled() => break,
+            _ = refresh.tick() => {
+                match crate::config::maintain_certificate(directory, &runtime.config, &expected_trust).and_then(|config| { let tls = config.tls()?; Ok((config, tls)) }) {
+                    Ok((config, tls)) => {
+                        acceptor = TlsAcceptor::from(tls);
+                        if let Ok(mut status) = runtime.certificate_status.lock() {
+                            *status = serde_json::json!({"expiresAt":config.certificate_expiry().ok(),"autoRenew":config.automatic_certificate_renewal()});
+                        }
+                    },
+                    Err(_) => eprintln!("Certificate refresh failed; check TLS configuration / 证书刷新失败，请检查 TLS 配置"),
+                }
+                continue;
+            },
             value = listener.accept() => value?,
         };
         let Ok(permit) = permits.clone().try_acquire_owned() else {
@@ -268,6 +286,34 @@ async fn route(
             "Unexpected credentials"
         );
         return Ok(error(StatusCode::OK, "relay.live"));
+    }
+    if req.uri().path() == crate::protocol::REGISTRATION_STATUS_PATH {
+        ensure!(
+            single(&req, "upgrade")?.is_none() && single(&req, "x-cowork-ticket")?.is_none(),
+            "Unexpected upgrade"
+        );
+        let (id, secret) = credentials(&req, false)?;
+        let mut core = runtime
+            .core
+            .lock()
+            .map_err(|_| anyhow::anyhow!("State unavailable"))?;
+        core.registry.renew_due(crate::store::now())?;
+        let device = core
+            .registry
+            .identify(&id, &secret)
+            .context("Authentication failed")?;
+        let host = device
+            .host_id
+            .as_deref()
+            .and_then(|id| core.registry.device(id));
+        let body = serde_json::to_vec(
+            &serde_json::json!({"protocol": PROTOCOL, "device": device, "host": host, "serverTime": crate::store::now()}),
+        )?;
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .header("cache-control", "no-store")
+            .body(Full::new(Bytes::from(body)))?);
     }
     let response = websocket(&req)?;
     let (id, secret) = credentials(&req, false)?;

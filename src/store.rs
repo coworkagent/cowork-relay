@@ -143,7 +143,15 @@ pub struct Device {
     pub created_at: u64,
     pub expires_at: u64,
     pub generation: u64,
+    #[serde(default)]
+    pub auto_renew: bool,
+    #[serde(default = "default_renewal_days")]
+    pub renewal_days: u64,
 }
+fn default_renewal_days() -> u64 {
+    30
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct StoredDevice {
@@ -169,7 +177,7 @@ impl Registry {
         write_new_private(
             &directory.join("devices.json"),
             &serde_json::to_vec(&State {
-                format: 1,
+                format: 2,
                 devices: vec![],
             })?,
         )
@@ -191,10 +199,10 @@ impl Registry {
         lock.try_lock_exclusive()
             .context("Relay state is already in use")?;
         let path = directory.join("devices.json");
-        let state: State =
+        let mut state: State =
             serde_json::from_slice(&read_private(&path)?).context("Invalid device state")?;
         ensure!(
-            state.format == 1 && state.devices.len() <= MAX_DEVICES,
+            (state.format == 1 || state.format == 2) && state.devices.len() <= MAX_DEVICES,
             "Invalid device state"
         );
         let mut ids = std::collections::HashSet::new();
@@ -206,7 +214,9 @@ impl Registry {
             );
             validate_label(&d.name, &d.group)?;
             ensure!(
-                d.expires_at > d.created_at && d.generation > 0,
+                d.expires_at > d.created_at
+                    && d.generation > 0
+                    && (1..=90).contains(&d.renewal_days),
                 "Invalid device lifetime"
             );
             ensure!(
@@ -230,12 +240,22 @@ impl Registry {
                 ),
             }
         }
-        Ok(Self {
+        if state.format == 1 {
+            // 仅迁移仍有效的旧登记；过期和禁用设备不会获得自动恢复权限。
+            for entry in &mut state.devices {
+                entry.device.auto_renew = entry.device.enabled && entry.device.expires_at > now();
+            }
+            state.format = 2;
+            atomic_json(&path, &state)?;
+        }
+        let mut registry = Self {
             path,
             state,
             _lock: lock,
             faulted: false,
-        })
+        };
+        registry.renew_due(now())?;
+        Ok(registry)
     }
     fn live(&self) -> Result<()> {
         ensure!(!self.faulted, "Storage unavailable");
@@ -274,6 +294,11 @@ impl Registry {
         Some(d)
     }
     pub fn authenticate(&self, id: &str, secret: &str) -> Option<Device> {
+        self.identify(id, secret)?;
+        self.active(id)
+    }
+    // 只读状态认证允许查看本设备到期状态，不能据此建立转发连接。
+    pub fn identify(&self, id: &str, secret: &str) -> Option<Device> {
         if !valid_id(id) || !valid_secret(secret) {
             return None;
         }
@@ -286,7 +311,7 @@ impl Registry {
         ) {
             return None;
         }
-        self.active(id)
+        self.device(id)
     }
     fn commit(&mut self, next: State) -> Result<()> {
         self.live()?;
@@ -333,6 +358,8 @@ impl Registry {
             created_at: now(),
             expires_at: now() + days * 86400,
             generation: 1,
+            auto_renew: true,
+            renewal_days: days,
         };
         let secret = random_secret();
         let mut next = self.state.clone();
@@ -342,6 +369,60 @@ impl Registry {
         });
         self.commit(next)?;
         Ok((device, secret))
+    }
+    pub fn renew(&mut self, id: &str, days: u64) -> Result<Device> {
+        ensure!((1..=90).contains(&days), "Invalid renewal duration");
+        let mut next = self.state.clone();
+        let device = &mut next
+            .devices
+            .iter_mut()
+            .find(|e| e.device.id == id)
+            .context("Unknown device")?
+            .device;
+        device.expires_at = device.expires_at.max(now() + days * 86400);
+        device.renewal_days = days;
+        let result = device.clone();
+        self.commit(next)?;
+        Ok(result)
+    }
+    pub fn set_auto_renew(&mut self, id: &str, enabled: bool) -> Result<Device> {
+        let mut next = self.state.clone();
+        let device = &mut next
+            .devices
+            .iter_mut()
+            .find(|e| e.device.id == id)
+            .context("Unknown device")?
+            .device;
+        // 开启策略不代替管理员手动恢复已过期登记。
+        ensure!(
+            !enabled || (device.enabled && device.expires_at > now()),
+            "Device inactive"
+        );
+        device.auto_renew = enabled;
+        let result = device.clone();
+        self.commit(next)?;
+        Ok(result)
+    }
+    pub fn renew_due(&mut self, at: u64) -> Result<()> {
+        self.live()?;
+        let mut next = self.state.clone();
+        let mut changed = false;
+        for entry in &mut next.devices {
+            let device = &mut entry.device;
+            let lifetime = device.renewal_days * 86400;
+            if device.enabled
+                && device.auto_renew
+                && device.expires_at.saturating_sub(at) <= (7 * 86400).min(lifetime / 4)
+            {
+                // 持久策略允许服务停机后续期；禁用状态始终优先。
+                device.expires_at = at.checked_add(lifetime).context("Invalid clock")?;
+                changed = true;
+            }
+        }
+        if changed {
+            self.commit(next)?;
+        }
+        Ok(())
     }
     pub fn set_enabled(&mut self, id: &str, enabled: bool) -> Result<Device> {
         let mut next = self.state.clone();
@@ -422,6 +503,54 @@ mod tests {
         store.set_enabled(&host.id, true)?;
         assert!(store.authenticate(&client.id, &cs).is_some());
         assert!(Registry::open(root.path()).is_err());
+        Ok(())
+    }
+    #[test]
+    fn renewal_preserves_scope_and_credentials_and_never_enables_devices() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700))?;
+        }
+        Registry::create(root.path())?;
+        let mut store = Registry::open(root.path())?;
+        let (host, secret) = store.add("Computer".into(), Role::Host, "a".into(), None, 30)?;
+        let (client, token) = store.add(
+            "Phone".into(),
+            Role::Client,
+            "a".into(),
+            Some(host.id.clone()),
+            30,
+        )?;
+        store.renew_due(now() + 35 * 86400)?;
+        assert!(store.device(&host.id).unwrap().expires_at > host.expires_at);
+        assert_eq!(
+            store.authenticate(&host.id, &secret).unwrap().generation,
+            host.generation
+        );
+        assert_eq!(
+            store.authenticate(&client.id, &token).unwrap().host_id,
+            client.host_id
+        );
+        store.set_auto_renew(&client.id, false)?;
+        let fixed = store.device(&client.id).unwrap().expires_at;
+        store.set_enabled(&host.id, false)?;
+        let disabled = store.device(&host.id).unwrap();
+        store.renew_due(now() + 100 * 86400)?;
+        assert_eq!(
+            store.device(&host.id).unwrap().expires_at,
+            disabled.expires_at
+        );
+        assert_eq!(store.device(&client.id).unwrap().expires_at, fixed);
+        store.renew(&host.id, 90)?;
+        assert!(!store.device(&host.id).unwrap().enabled);
+        assert!(store.authenticate(&host.id, &secret).is_none());
+        assert!(store.identify(&host.id, &secret).is_some());
+        drop(store);
+        let store = Registry::open(root.path())?;
+        assert!(!store.device(&client.id).unwrap().auto_renew);
+        assert!(!store.device(&host.id).unwrap().enabled);
         Ok(())
     }
     #[test]

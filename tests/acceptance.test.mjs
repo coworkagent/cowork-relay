@@ -168,6 +168,7 @@ test('expiry disconnects an already authenticated host and renew-ip keeps import
   const host = f.enroll('host', 'g');
   await f.stop();
   const path = join(f.state, 'devices.json'); const state = JSON.parse(readFileSync(path));
+  state.devices[0].device.autoRenew = false;
   state.devices[0].device.createdAt = Math.floor(Date.now() / 1000) - 10;
   state.devices[0].device.expiresAt = Math.floor(Date.now() / 1000) + 3;
   writeFileSync(path, JSON.stringify(state), { mode: 0o600 });
@@ -179,4 +180,27 @@ test('expiry disconnects an already authenticated host and renew-ip keeps import
   await once(control.ws, 'close');
   assert.equal(f.cli('devices', 'inspect', host.device.id).online, false);
   await assert.rejects(f.control(host));
+});
+
+
+test('renewal keeps registration identity and status reads cannot grant tunnel access', { timeout: 30_000 }, async t => {
+  const f = await fixture(); t.after(f.cleanup);
+  const host = f.enroll('host', 'renewal'), client = f.enroll('client', 'renewal', host.device.id);
+  assert.equal(host.device.autoRenew, true); assert.equal(client.device.autoRenew, true);
+  const renewed = f.cli('devices', 'renew', host.device.id, '--days', '90');
+  assert.equal(renewed.id, host.device.id); assert.equal(renewed.generation, host.device.generation);
+  assert.ok(renewed.expiresAt > host.device.expiresAt);
+  const control = await f.control(host); t.after(() => control.ws?.terminate());
+  assert.equal(control.ready.hostId, host.device.id);
+  assert.equal(f.cli('devices', 'auto-renew', client.device.id, '--enabled', 'false').autoRenew, false);
+  f.cli('devices', 'disable', client.device.id);
+  const unchanged = f.cli('devices', 'renew', client.device.id, '--days', '90');
+  assert.equal(unchanged.enabled, false);
+  const denied = await f.tunnel(client); assert.equal(denied.status, 403); denied.socket.destroy();
+  const status = await f.request(`GET /relay/v1/registration HTTP/1.1\r\nHost: 127.0.0.1:${f.port}\r\nAuthorization: Bearer ${client.device.id}.${client.secret}\r\n\r\n`);
+  assert.equal(status.status, 200); status.socket.destroy();
+  const other = await f.request(`GET /relay/v1/registration HTTP/1.1\r\nHost: 127.0.0.1:${f.port}\r\nAuthorization: Bearer ${host.device.id}.${client.secret}\r\n\r\n`);
+  assert.equal(other.status, 403); other.socket.destroy();
+  const certificate = f.cli('status').certificate;
+  assert.equal(certificate.autoRenew, true); assert.ok(certificate.expiresAt > Date.now() / 1000);
 });

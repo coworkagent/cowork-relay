@@ -1,0 +1,324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.invalid/schemas/relay/1/config",
+  "allOf": [
+    {
+      "$ref": "https://cowork.invalid/schemas/relay/1/config#/$defs/registration"
+    }
+  ],
+  "$defs": {
+    "trust": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": 1
+        },
+        "origin": {
+          "$ref": "https://cowork.invalid/schemas/relay/1/config#/$defs/httpsOrigin"
+        },
+        "trust": {
+          "enum": [
+            "system",
+            "private-ca"
+          ]
+        },
+        "caCertificatePem": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 64,
+              "maxLength": 16384,
+              "pattern": "^-----BEGIN CERTIFICATE-----[\\s\\S]+-----END CERTIFICATE-----\\s*$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "caSha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "format",
+        "origin",
+        "trust",
+        "caCertificatePem",
+        "caSha256"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "trust": {
+                "const": "system"
+              }
+            },
+            "required": [
+              "trust"
+            ]
+          },
+          "then": {
+            "properties": {
+              "caCertificatePem": {
+                "type": "null"
+              },
+              "caSha256": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "caCertificatePem": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 16384,
+                "pattern": "^-----BEGIN CERTIFICATE-----[\\s\\S]+-----END CERTIFICATE-----\\s*$"
+              },
+              "caSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "device": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "https://cowork.invalid/schemas/relay/1/control#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "role": {
+          "enum": [
+            "host",
+            "client"
+          ]
+        },
+        "group": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "hostId": {
+          "anyOf": [
+            {
+              "$ref": "https://cowork.invalid/schemas/relay/1/control#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "expiresAt": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "autoRenew": {
+          "type": "boolean"
+        },
+        "renewalDays": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 90
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "role",
+        "group",
+        "hostId",
+        "enabled",
+        "createdAt",
+        "expiresAt",
+        "generation"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "host"
+              }
+            },
+            "required": [
+              "role"
+            ]
+          },
+          "then": {
+            "properties": {
+              "hostId": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "hostId": {
+                "$ref": "https://cowork.invalid/schemas/relay/1/control#/$defs/id"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "registration": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": 1
+        },
+        "relay": {
+          "$ref": "https://cowork.invalid/schemas/relay/1/config#/$defs/trust"
+        },
+        "device": {
+          "$ref": "https://cowork.invalid/schemas/relay/1/config#/$defs/device"
+        },
+        "secret": {
+          "$ref": "https://cowork.invalid/schemas/relay/1/control#/$defs/secret"
+        }
+      },
+      "required": [
+        "format",
+        "relay",
+        "device",
+        "secret"
+      ],
+      "additionalProperties": false
+    },
+    "tls": {
+      "type": "object",
+      "properties": {
+        "certificatePem": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 24576,
+          "pattern": "^-----BEGIN CERTIFICATE-----[\\s\\S]+-----END CERTIFICATE-----\\s*$"
+        },
+        "privateKeyPem": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 12288,
+          "pattern": "^-----BEGIN (?:RSA |EC )?PRIVATE KEY-----[\\s\\S]+-----END (?:RSA |EC )?PRIVATE KEY-----\\s*$"
+        }
+      },
+      "required": [
+        "certificatePem",
+        "privateKeyPem"
+      ],
+      "additionalProperties": false
+    },
+    "gateway": {
+      "type": "object",
+      "properties": {
+        "registration": {
+          "allOf": [
+            {
+              "$ref": "https://cowork.invalid/schemas/relay/1/config#/$defs/registration"
+            },
+            {
+              "properties": {
+                "device": {
+                  "properties": {
+                    "role": {
+                      "const": "host"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            }
+          ]
+        },
+        "tls": {
+          "$ref": "https://cowork.invalid/schemas/relay/1/config#/$defs/tls"
+        },
+        "endpointDiscovery": {
+          "const": true,
+          "description": "Explicit Host support for relay.endpoint through this private Bridge. Absent disables the endpoint route."
+        }
+      },
+      "required": [
+        "registration",
+        "tls"
+      ],
+      "additionalProperties": false
+    },
+    "httpsOrigin": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://(?:[A-Za-z0-9][A-Za-z0-9.-]*|\\[[0-9A-Fa-f:.]+\\])(?::[1-9][0-9]{0,4})?$",
+      "maxLength": 300,
+      "description": "Canonical HTTPS origin with domain, IPv4 or bracketed IPv6. Runtime validation must verify address and port, reject userinfo, paths, queries and fragments, and enforce origin-scoped certificate trust."
+    },
+    "registrationStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "cowork.relay/1"
+        },
+        "device": {
+          "$ref": "https://cowork.invalid/schemas/relay/1/config#/$defs/device"
+        },
+        "host": {
+          "anyOf": [
+            {
+              "$ref": "https://cowork.invalid/schemas/relay/1/config#/$defs/device"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "serverTime": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "protocol",
+        "device",
+        "host",
+        "serverTime"
+      ]
+    },
+    "registrationStatusPath": {
+      "const": "/relay/v1/registration"
+    }
+  }
+}

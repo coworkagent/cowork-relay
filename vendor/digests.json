@@ -1,5 +1,6 @@
 {
-  "vendor/relay/control.schema.json": "83cdfb31fdf155c7e4629f3667e0a54fd34ff2eee9bb6c1c5eb920d1ba722aa6",
-  "vendor/relay/V1-CONTRACT.md": "9d6ad85cb17b5a91467c2f954e3d5e592dbb93912cc401e0fadc321eb9797ef1",
-  "vendor/cowork-protocol-0.0.6-relay.2.tgz": "25e9cb4d4201ab2af686f3d016d0ff124763c1a1c912b0eddd61096926d7f7f5"
+  "vendor/relay/control.schema.json": "0a6992a4e886622ed36af154a2f97c425aa8124d7e2fe1cce6ed2fda7ae92ebf",
+  "vendor/relay/config.schema.json": "28b5c34fd5688e2cc32847ec093d9f8e532bb9ba73246939880bad762679b236",
+  "vendor/relay/V1-CONTRACT.md": "620455d144fcffd3b78eecfe357232782253d669c3fc1d273c14b95957223c3d",
+  "vendor/cowork-protocol-0.0.6-renewal.0.tgz": "a49dc0c120e24f1509176f780f2f52102385b37b6f21ad6fac7576a8cd5d01c4"
 }

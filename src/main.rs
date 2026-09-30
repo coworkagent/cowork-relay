@@ -122,6 +122,18 @@ enum Devices {
     List,
     #[command(about = "Inspect one device / 查看单个设备")]
     Inspect { id: String },
+    #[command(about = "Extend expiry without replacing credentials / 保留凭据与绑定，延长有效期")]
+    Renew {
+        id: String,
+        #[arg(long, default_value = "30")]
+        days: u64,
+    },
+    #[command(about = "Set automatic renewal / 设置自动续期")]
+    AutoRenew {
+        id: String,
+        #[arg(long, action = clap::ArgAction::Set)]
+        enabled: bool,
+    },
     #[command(about = "Register a host computer / 登记电脑端设备")]
     AddHost {
         #[arg(long)]
@@ -130,6 +142,8 @@ enum Devices {
         group: String,
         #[arg(long, default_value = "30")]
         days: u64,
+        #[arg(long, default_value = "true", action = clap::ArgAction::Set, help = "Keep this registration renewed / 自动续期登记")]
+        auto_renew: bool,
         #[arg(
             long,
             help = "New private credential file (0600) / 新的私有凭据文件（0600）"
@@ -146,6 +160,8 @@ enum Devices {
         host: String,
         #[arg(long, default_value = "30")]
         days: u64,
+        #[arg(long, default_value = "true", action = clap::ArgAction::Set, help = "Keep this registration renewed / 自动续期登记")]
+        auto_renew: bool,
         #[arg(
             long,
             help = "New private credential file (0600) / 新的私有凭据文件（0600）"
@@ -205,6 +221,26 @@ async fn run(cli: &Cli) -> Result<()> {
             Devices::Inspect { id } => {
                 admin::request(directory, &Command::Inspect { id: id.clone() }).await?
             }
+            Devices::Renew { id, days } => {
+                admin::request(
+                    directory,
+                    &Command::Renew {
+                        id: id.clone(),
+                        days: *days,
+                    },
+                )
+                .await?
+            }
+            Devices::AutoRenew { id, enabled } => {
+                admin::request(
+                    directory,
+                    &Command::AutoRenew {
+                        id: id.clone(),
+                        enabled: *enabled,
+                    },
+                )
+                .await?
+            }
             Devices::Kick { id } => {
                 admin::request(directory, &Command::Kick { id: id.clone() }).await?
             }
@@ -218,6 +254,7 @@ async fn run(cli: &Cli) -> Result<()> {
                 name,
                 group,
                 days,
+                auto_renew,
                 credential_out,
             } => {
                 enroll(
@@ -228,6 +265,7 @@ async fn run(cli: &Cli) -> Result<()> {
                         group: group.clone(),
                         host_id: None,
                         days: *days,
+                        auto_renew: *auto_renew,
                     },
                     credential_out,
                 )
@@ -238,6 +276,7 @@ async fn run(cli: &Cli) -> Result<()> {
                 group,
                 host,
                 days,
+                auto_renew,
                 credential_out,
             } => {
                 enroll(
@@ -248,6 +287,7 @@ async fn run(cli: &Cli) -> Result<()> {
                         group: group.clone(),
                         host_id: Some(host.clone()),
                         days: *days,
+                        auto_renew: *auto_renew,
                     },
                     credential_out,
                 )
@@ -292,8 +332,8 @@ async fn enroll(directory: &Path, command: Command, out: &Path) -> Result<serde_
 
 async fn serve(directory: &Path, lang: Language) -> Result<()> {
     let config = Config::load(directory)?;
-    config.tls()?;
     let registry = Registry::open(directory)?;
+    let config = config::maintain_certificate(directory, &config, &config.public_trust()?)?;
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
         .context("Cannot bind relay listener")?;
@@ -319,7 +359,7 @@ async fn serve(directory: &Path, lang: Language) -> Result<()> {
     });
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let result = tokio::select! {
-        value = transport::serve(relay.clone(),listener) => value,
+        value = transport::serve(relay.clone(),listener, directory) => value,
         value = admin::serve(relay.clone(),admin_listener) => value,
         value = tokio::signal::ctrl_c() => value.map_err(Into::into),
         _ = terminate.recv() => Ok(()),

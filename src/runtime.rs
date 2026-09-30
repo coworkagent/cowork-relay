@@ -25,6 +25,7 @@ pub const TICKET_SECONDS: u64 = crate::protocol::TICKET_SECONDS as u64;
 
 pub struct Runtime {
     pub config: Config,
+    pub certificate_status: Mutex<serde_json::Value>,
     pub shutdown: CancellationToken,
     pub core: Mutex<Core>,
     pub tasks: tokio_util::task::TaskTracker,
@@ -206,6 +207,10 @@ impl Core {
         result
     }
     pub fn reap(&mut self) {
+        if self.registry.renew_due(crate::store::now()).is_err() {
+            self.close_all();
+            return;
+        }
         let invalid: Vec<_> = self
             .hosts
             .iter()
@@ -241,6 +246,9 @@ impl Core {
 impl Runtime {
     pub fn new(config: Config, registry: Registry) -> Arc<Self> {
         Arc::new(Self {
+            certificate_status: Mutex::new(
+                serde_json::json!({"expiresAt":config.certificate_expiry().ok(),"autoRenew":config.automatic_certificate_renewal()}),
+            ),
             config,
             shutdown: CancellationToken::new(),
             core: Mutex::new(Core::new(registry)),

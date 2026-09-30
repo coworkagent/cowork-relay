@@ -5,12 +5,14 @@
   "license": "UNLICENSED",
   "type": "module",
   "description": "Acceptance checks for the Cowork relay",
-  "engines": { "node": ">=22.12" },
+  "engines": {
+    "node": ">=22.12"
+  },
   "scripts": {
     "test:acceptance": "node --test tests/*.test.mjs"
   },
   "devDependencies": {
-    "@cowork/protocol": "file:vendor/cowork-protocol-0.0.6-relay.2.tgz",
+    "@cowork/protocol": "file:vendor/cowork-protocol-0.0.6-renewal.0.tgz",
     "ajv": "8.20.0",
     "ws": "8.21.3"
   }
