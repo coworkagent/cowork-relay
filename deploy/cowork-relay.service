@@ -1,0 +1,28 @@
+[Unit]
+Description=Cowork encrypted connection relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cowork-relay
+Group=cowork-relay
+UMask=0077
+ExecStart=/usr/local/bin/cowork-relay --data-dir /var/lib/cowork-relay serve
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/cowork-relay
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryMax=512M
+TasksMax=128
+LimitNOFILE=2048
+
+[Install]
+WantedBy=multi-user.target

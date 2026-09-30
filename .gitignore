@@ -1,0 +1,9 @@
+/target/
+/node_modules/
+/.tmp-test/
+/.local/
+/relay-state/
+/computer.json
+/phone.json
+/relay-trust.json
+.DS_Store

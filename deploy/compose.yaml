@@ -1,0 +1,19 @@
+services:
+  relay:
+    build: ..
+    image: cowork-relay:local
+    ports:
+      - "8443:8443"
+    volumes:
+      - relay-data:/data
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    stop_grace_period: 10s
+
+volumes:
+  relay-data:
