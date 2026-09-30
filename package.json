@@ -10,7 +10,7 @@
     "test:acceptance": "node --test tests/*.test.mjs"
   },
   "devDependencies": {
-    "@cowork/protocol": "file:vendor/cowork-protocol-0.0.6-relay.1.tgz",
+    "@cowork/protocol": "file:vendor/cowork-protocol-0.0.6-relay.2.tgz",
     "ajv": "8.20.0",
     "ws": "8.21.3"
   }

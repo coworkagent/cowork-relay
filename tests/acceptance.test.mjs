@@ -45,6 +45,11 @@ test('verified outer TLS, strict routing and private administration', { timeout:
   assert.match(f.human('--lang', 'zh-CN', 'status'), /^操作完成\n/);
   const duplicate = await f.request(`GET /health/live HTTP/1.1\r\nHost: 127.0.0.1:${f.port}\r\nHost: wrong.invalid\r\n\r\n`);
   assert.notEqual(duplicate.status, 200); duplicate.socket.destroy();
+  const unknownTarget = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.cowork.invalid';
+  const challenge = await f.request(`CONNECT ${unknownTarget}:443 HTTP/1.1\r\nHost: ${unknownTarget}\r\n\r\n`);
+  assert.equal(challenge.status, 407);
+  assert.match(challenge.headers, /proxy-authenticate: Basic realm="Cowork Relay"/i);
+  challenge.socket.destroy();
 });
 
 test('several computers and phones retain independent authenticated end-to-end TLS', { timeout: 60_000 }, async t => {
@@ -84,6 +89,8 @@ test('several computers and phones retain independent authenticated end-to-end T
   await waitClosed(sessions[0]);
   assert.equal(sessions[1].destroyed, false); assert.equal(sessions[2].destroyed, false);
   const retry = await f.tunnel(c); assert.equal(retry.status, 200); retry.socket.destroy();
+  const noPortHost = await f.request(`CONNECT ${nameA}:443 HTTP/1.1\r\nHost: ${nameA}\r\nProxy-Authorization: Basic ${Buffer.from(`${c.device.id}:${c.secret}`).toString('base64')}\r\n\r\n`);
+  assert.equal(noPortHost.status, 200); noPortHost.socket.destroy();
   const closed = waitClosed(sessions[1]);
   f.cli('devices', 'disable', a.device.id);
   await closed;

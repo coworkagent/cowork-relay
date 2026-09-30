@@ -19,14 +19,18 @@ Credentials do not appear in URLs, endpoint certificates or logs.
 - `GET /relay/v1/data/<connectionId>`: authenticated host WebSocket. Requires
   `X-Cowork-Ticket` matching a live, one-use ticket for the current host epoch.
 - `CONNECT <hostRelayDeviceId>.cowork.invalid:443`: client only, exact authority
-  and matching Host header. The hostname is a logical route, never resolved or
+  and matching Host header (the default `:443` may be omitted in Host). The hostname is a logical route, never resolved or
   used as an arbitrary network destination. Proxy authentication is required.
 - `GET /health/live`: minimal process health, no device information.
 
 All public requests reject Cookie, Origin and Referer, duplicate authentication
 or Host headers, request bodies and unexpected paths/queries. WebSocket requests
 require the configured relay authority. CONNECT requires the exact bound host
-authority. Only HTTP/1.1 is supported. No wildcard destination or direct fallback.
+authority after normalizing an omitted default port. Only HTTP/1.1 is supported.
+No wildcard destination or direct fallback. A syntactically valid CONNECT without
+proxy credentials receives 407 with `Proxy-Authenticate: Basic realm="Cowork Relay"`.
+This challenge discloses no registered device state. Credentials are sent only
+after successful outer TLS verification; invalid credentials are denied with 403.
 WebSocket upgrades require subprotocol `cowork.relay.v1` and reject extensions.
 
 ## Control and data

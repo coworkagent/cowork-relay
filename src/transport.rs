@@ -192,17 +192,42 @@ async fn route(
     ensure!(req.uri().query().is_none(), "Queries are forbidden");
     let host = single(&req, "host")?.context("Missing Host")?.to_string();
     if req.method() == Method::CONNECT {
+        let target = req
+            .uri()
+            .authority()
+            .context("Missing CONNECT authority")?
+            .as_str()
+            .to_string();
+        let target_id = target
+            .strip_suffix(".cowork.invalid:443")
+            .context("Invalid CONNECT target")?;
         ensure!(
             req.uri().scheme().is_none()
-                && req.uri().authority().is_some_and(|a| a.as_str() == host),
+                && crate::store::valid_id(target_id)
+                && (host == target || format!("{host}:443") == target),
             "Invalid CONNECT target"
         );
         ensure!(
             single(&req, "upgrade")?.is_none() && single(&req, "x-cowork-ticket")?.is_none(),
             "Invalid CONNECT headers"
         );
+        if single(&req, "proxy-authorization")?.is_none() {
+            ensure!(
+                single(&req, "authorization")?.is_none(),
+                "Unexpected authentication header"
+            );
+            let mut reply = error(
+                StatusCode::PROXY_AUTHENTICATION_REQUIRED,
+                "relay.authentication_required",
+            );
+            reply.headers_mut().insert(
+                "proxy-authenticate",
+                hyper::header::HeaderValue::from_static("Basic realm=\"Cowork Relay\""),
+            );
+            return Ok(reply);
+        }
         let (id, secret) = credentials(&req, true)?;
-        let (lease, attached) = match runtime.connect(&id, &secret, &host, peer) {
+        let (lease, attached) = match runtime.connect(&id, &secret, &target, peer) {
             Ok(value) => value,
             Err(_) => return Ok(error(StatusCode::FORBIDDEN, "relay.unavailable")),
         };
