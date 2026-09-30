@@ -8,10 +8,65 @@ need to be exposed to the internet. One instance supports several computers and
 phones, with independent credentials and a specific computer assigned to each
 client registration.
 
-This is a development candidate. The service and its CLI are implemented;
-integration into the desktop and mobile applications is still in progress.
-Existing released applications cannot use this relay simply by entering its URL.
-No binary or container image has been published.
+Version **0.1.0** provides the relay service and local administration CLI.
+Use relay-capable Cowork desktop and mobile clients. The desktop integration
+requires a matching remote component; desktop 0.15.0 and older cannot use the
+relay simply by entering its URL. A mobile update alone does not update the
+computer. Local and simulator checks do not qualify a real public deployment.
+Container images are built locally from the included Dockerfile.
+
+## Download and install
+
+Download an archive and `SHA256SUMS` from the
+[0.1.0 release](https://github.com/coworkagent/cowork-relay/releases/tag/v0.1.0).
+Repository access is required while this repository is private.
+
+| Platform | Archive | Requirements |
+| --- | --- | --- |
+| Linux x64 | `cowork-relay-0.1.0-linux-x64.tar.gz` | glibc 2.36+; Debian 12 / Ubuntu 24.04 or compatible |
+| Linux ARM64 | `cowork-relay-0.1.0-linux-arm64.tar.gz` | glibc 2.36+; Debian 12 / Ubuntu 24.04 or compatible |
+| macOS Intel | `cowork-relay-0.1.0-darwin-x64.tar.gz` | macOS 12+ |
+| macOS Apple Silicon | `cowork-relay-0.1.0-darwin-arm64.tar.gz` | macOS 12+ |
+
+Choose the archive for the server's architecture. Linux binaries are dynamically
+linked to glibc; Alpine/musl systems need a compatible build or the Docker image.
+Mac binaries are development utilities, without Developer ID notarization.
+Native Windows binaries are not provided because local administration requires
+Unix sockets and Unix file permissions; use a Linux server or Linux VM.
+
+```sh
+# Verify on Linux (on macOS, run shasum -a 256 on the archive and compare its entry).
+sha256sum --ignore-missing -c SHA256SUMS
+tar -xzf cowork-relay-0.1.0-linux-x64.tar.gz
+mkdir -p "$HOME/.local/bin"
+install -m 0755 cowork-relay-0.1.0-linux-x64/cowork-relay "$HOME/.local/bin/cowork-relay"
+"$HOME/.local/bin/cowork-relay" --version
+```
+
+The archive includes both language guides and deployment templates. Keep the
+state directory outside the extracted installation directory. Verify a checksum
+from the authenticated release source; a checksum alone does not establish
+publisher identity. For upgrades, stop the service, back up private state and
+replace only the executable. Do not initialize the existing state again.
+
+## Connect a computer and phone
+
+1. Initialize the relay with one of the trust modes below and start it.
+2. Create a host registration and a phone registration targeting that host.
+   Privately deliver `computer.json` and `phone.json` to their intended devices.
+3. In the computer's Remote control settings, import its registration, verify
+   the relay address and CA fingerprint, then enable internet connections.
+4. On the phone, import its relay registration and confirm the same server's
+   identity. Trust is scoped to this relay, not installed system-wide.
+5. Generate an internet pairing invitation on the computer, granting only the
+   required projects/actions and internet access. Scan or import it on the phone,
+   compare the six-digit code on both devices, and approve on the computer.
+
+Supported relay clients require iOS 17+ or Android 10+; earlier supported app
+versions retain LAN connectivity. Each phone registration targets one computer;
+import additional registrations to connect to other computers. Available LAN
+routes take priority. Changing the paired computer's identity requires explicit
+pairing again; signed leaf renewal under the same saved CA can recover safely.
 
 ## Security and compatibility
 

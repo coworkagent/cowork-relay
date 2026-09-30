@@ -6,8 +6,53 @@
 电脑主动向中继建立出站连接，无需把电脑的局域网端口暴露到互联网。一个实例可以
 服务多台电脑和手机，每个设备使用独立凭据，每份客户端登记明确绑定一台电脑。
 
-当前为开发候选：中继服务和 CLI 已实现，桌面与手机应用的接入仍在进行。
-已发布的应用不能仅靠填写该 URL 使用中继。目前没有发布二进制或容器镜像。
+**0.1.0** 提供中继服务和本机管理 CLI。使用时需要支持中继的 Cowork 桌面与手机客户端，
+电脑还需匹配的远程服务组件；桌面 0.15.0 及更早版本不能仅填写 URL 就使用中继。
+只更新手机不会更新电脑。本地和模拟器检查不代表真实公网部署已通过验收。
+容器镜像通过仓库提供的 Dockerfile 在本地构建。
+
+## 下载与安装
+
+从 [0.1.0 发布页](https://github.com/coworkagent/cowork-relay/releases/tag/v0.1.0)
+下载对应压缩包和 `SHA256SUMS`。仓库保持私有期间，下载需要仓库访问权限。
+
+| 平台 | 压缩包 | 运行要求 |
+| --- | --- | --- |
+| Linux x64 | `cowork-relay-0.1.0-linux-x64.tar.gz` | glibc 2.36+；Debian 12 / Ubuntu 24.04 或兼容系统 |
+| Linux ARM64 | `cowork-relay-0.1.0-linux-arm64.tar.gz` | glibc 2.36+；Debian 12 / Ubuntu 24.04 或兼容系统 |
+| macOS Intel | `cowork-relay-0.1.0-darwin-x64.tar.gz` | macOS 12+ |
+| macOS Apple Silicon | `cowork-relay-0.1.0-darwin-arm64.tar.gz` | macOS 12+ |
+
+按服务器架构选择。Linux 二进制动态链接 glibc，Alpine/musl 系统需要兼容构建或使用
+Docker 镜像。Mac 二进制用于开发验证，未进行 Developer ID 公证。当前不提供原生
+Windows 二进制，因为本机管理依赖 Unix socket 和文件权限；可使用 Linux 服务器或虚拟机。
+
+```sh
+# Linux 校验；macOS 使用 shasum -a 256 计算压缩包摘要，与清单对应行比较。
+sha256sum --ignore-missing -c SHA256SUMS
+tar -xzf cowork-relay-0.1.0-linux-x64.tar.gz
+mkdir -p "$HOME/.local/bin"
+install -m 0755 cowork-relay-0.1.0-linux-x64/cowork-relay "$HOME/.local/bin/cowork-relay"
+"$HOME/.local/bin/cowork-relay" --version
+```
+
+压缩包包含双语指南和部署模板。状态目录应独立于安装目录；从已认证的发布来源取得
+校验和，校验和本身不证明发布者身份。升级时先停服、备份私有状态，再替换可执行文件，
+不要对原状态目录重新初始化。
+
+## 连接电脑和手机
+
+1. 按下文选择一种信任方式，初始化并启动中继。
+2. 创建电脑登记，再创建指向该电脑的手机登记，私下将 `computer.json` 和 `phone.json`
+   分别交付对应设备。
+3. 在电脑的远程控制设置中导入登记，核对中继地址和 CA 指纹，开启互联网连接。
+4. 手机导入中继登记并确认同一服务器身份。信任仅对该中继生效，不安装到系统信任库。
+5. 电脑为所需项目、操作和互联网访问生成配对邀请；手机扫描或导入，两端核对六位验证码，
+   最后在电脑批准。
+
+中继客户端要求 iOS 17+ 或 Android 10+；应用支持的较旧系统仍可使用局域网连接。
+每份手机登记只指向一台电脑，连接其他电脑需导入对应登记。可用局域网连接优先使用。
+电脑身份变更需要明确重新配对；同一已保存 CA 下的叶证书更新可通过签名证明安全恢复。
 
 ## 安全与兼容性
 
