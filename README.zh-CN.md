@@ -6,22 +6,22 @@
 电脑主动向中继建立出站连接，无需把电脑的局域网端口暴露到互联网。一个实例可以
 服务多台电脑和手机，每个设备使用独立凭据，每份客户端登记明确绑定一台电脑。
 
-**0.1.1** 提供中继服务和本机管理 CLI。使用时需要支持中继的 Cowork 桌面与手机客户端，
+**0.2.0** 提供中继服务、本机管理 CLI、登记与证书自动续期，以及有界的拒绝请求日志。使用时需要支持中继的 Cowork 桌面与手机客户端，
 电脑还需匹配的远程服务组件；桌面 0.15.0 及更早版本不能仅填写 URL 就使用中继。
 只更新手机不会更新电脑。本地和模拟器检查不代表真实公网部署已通过验收。
 容器镜像通过仓库提供的 Dockerfile 在本地构建。
 
 ## 下载与安装
 
-从 [0.1.1 发布页](https://github.com/coworkagent/cowork-relay/releases/tag/v0.1.1)
+从 [0.2.0 发布页](https://github.com/coworkagent/cowork-relay/releases/tag/v0.2.0)
 下载对应压缩包和 `SHA256SUMS`。
 
 | 平台 | 压缩包 | 运行要求 |
 | --- | --- | --- |
-| Linux x64 | `cowork-relay-0.1.1-linux-x64.tar.gz` | 静态 musl；不依赖系统 libc |
-| Linux ARM64 | `cowork-relay-0.1.1-linux-arm64.tar.gz` | 静态 musl；不依赖系统 libc |
-| macOS Intel | `cowork-relay-0.1.1-darwin-x64.tar.gz` | macOS 12+ |
-| macOS Apple Silicon | `cowork-relay-0.1.1-darwin-arm64.tar.gz` | macOS 12+ |
+| Linux x64 | `cowork-relay-0.2.0-linux-x64.tar.gz` | 静态 musl；不依赖系统 libc |
+| Linux ARM64 | `cowork-relay-0.2.0-linux-arm64.tar.gz` | 静态 musl；不依赖系统 libc |
+| macOS Intel | `cowork-relay-0.2.0-darwin-x64.tar.gz` | macOS 12+ |
+| macOS Apple Silicon | `cowork-relay-0.2.0-darwin-arm64.tar.gz` | macOS 12+ |
 
 按服务器架构选择。从 0.1.1 起，Linux 下载包静态链接 musl，可用于 glibc 和 musl 发行版，
 不需要升级 libc 或另行安装 musl。旧版 0.1.0 下载包仍动态链接 glibc，不包含这项兼容修复。
@@ -33,9 +33,9 @@ Windows 二进制，因为本机管理依赖 Unix socket 和文件权限；可�
 ```sh
 # Linux 校验；macOS 使用 shasum -a 256 计算压缩包摘要，与清单对应行比较。
 sha256sum --ignore-missing -c SHA256SUMS
-tar -xzf cowork-relay-0.1.1-linux-x64.tar.gz
+tar -xzf cowork-relay-0.2.0-linux-x64.tar.gz
 mkdir -p "$HOME/.local/bin"
-install -m 0755 cowork-relay-0.1.1-linux-x64/cowork-relay "$HOME/.local/bin/cowork-relay"
+install -m 0755 cowork-relay-0.2.0-linux-x64/cowork-relay "$HOME/.local/bin/cowork-relay"
 "$HOME/.local/bin/cowork-relay" --version
 ```
 
@@ -174,7 +174,7 @@ cowork-relay --data-dir ./relay-state devices enable DEVICE_ID
 
 `config.json` 支持有界容量配置：默认最多 512 个网络 socket、128 台在线电脑、总共 256 条数据流，
 每台电脑 32 条、每份客户端登记 8 条。每条数据流占手机和电脑各一个 socket，控制连接也计入总数。
-另限制最多 64 个并行 TLS／HTTP 接入握手。停服修改配置后重启。CLI 提供本机管理，不是持久审计日志。
+另限制最多 64 个并行 TLS／HTTP 接入握手。停服修改配置后重启。CLI 提供本机管理；拒绝请求日志见下文。
 
 数据消息上限为 64 KiB；90 秒无字节传输时断开，每条连接最长一小时。
 客户端重连后必须核对命令状态，不能盲目重放执行结果不确定的操作。
@@ -221,6 +221,20 @@ CA 和地址保持不变，无需重新导入登记。私有配置的 `autoRenew
 不会自动替换；根即将到期时，需要管理员处理并重新分发信任登记。保留私有 CA
 签名密钥，并严格限制状态目录权限。
 
-请配套升级支持续期的桌面端、手机端和 Server `0.0.6-renewal.0` 或更新版本。
-本节描述尚未发布的源码，现有发行版及 TestFlight 不会自动获得功能。升级前停服
-备份私有状态；新版登记格式不能被旧中继读取，回滚需同时恢复旧二进制和匹配备份。
+请配套使用 Cowork 桌面 0.16.0、Server 0.0.6 和支持续期的手机端（iOS TestFlight
+0.0.1 build 33 或更新版本）。各组件需分别升级；只更新中继不会让旧客户端获得续期能力。
+升级前停服备份私有状态；新版登记格式不能被旧中继读取，回滚需同时恢复旧二进制和匹配备份。
+
+## 拒绝请求日志
+
+服务通过独立线程向 stderr 写入 JSON 拒绝事件，包含固定原因、socket 来源 IP、
+服务器时间和双语说明，不包含请求路径、请求头、凭据或业务数据。每类原因每 30 秒
+最多排队记录四条样本，随后输出总次数。日志尽力送达；输出阻塞或队列已满时可丢弃
+样本，不拖慢连接处理。来源 IP 属于运维数据，请通过服务管理器设置保留时间和读取权限。
+
+本版本不增加按 IP 请求次数配额或带宽限制，现有容量配置保持不变。日志采样不会拒绝
+或阻塞请求。使用附带的 systemd 单元时，可通过以下命令查看：
+
+```sh
+journalctl -u cowork-relay --since today
+```

@@ -8,7 +8,8 @@ need to be exposed to the internet. One instance supports several computers and
 phones, with independent credentials and a specific computer assigned to each
 client registration.
 
-Version **0.1.1** provides the relay service and local administration CLI.
+Version **0.2.0** adds automatic registration and certificate renewal, plus
+bounded rejection logs, to the relay service and local administration CLI.
 Use relay-capable Cowork desktop and mobile clients. The desktop integration
 requires a matching remote component; desktop 0.15.0 and older cannot use the
 relay simply by entering its URL. A mobile update alone does not update the
@@ -18,14 +19,14 @@ Container images are built locally from the included Dockerfile.
 ## Download and install
 
 Download an archive and `SHA256SUMS` from the
-[0.1.1 release](https://github.com/coworkagent/cowork-relay/releases/tag/v0.1.1).
+[0.2.0 release](https://github.com/coworkagent/cowork-relay/releases/tag/v0.2.0).
 
 | Platform | Archive | Requirements |
 | --- | --- | --- |
-| Linux x64 | `cowork-relay-0.1.1-linux-x64.tar.gz` | Static musl; no system libc dependency |
-| Linux ARM64 | `cowork-relay-0.1.1-linux-arm64.tar.gz` | Static musl; no system libc dependency |
-| macOS Intel | `cowork-relay-0.1.1-darwin-x64.tar.gz` | macOS 12+ |
-| macOS Apple Silicon | `cowork-relay-0.1.1-darwin-arm64.tar.gz` | macOS 12+ |
+| Linux x64 | `cowork-relay-0.2.0-linux-x64.tar.gz` | Static musl; no system libc dependency |
+| Linux ARM64 | `cowork-relay-0.2.0-linux-arm64.tar.gz` | Static musl; no system libc dependency |
+| macOS Intel | `cowork-relay-0.2.0-darwin-x64.tar.gz` | macOS 12+ |
+| macOS Apple Silicon | `cowork-relay-0.2.0-darwin-arm64.tar.gz` | macOS 12+ |
 
 Choose the archive for the server's architecture. From 0.1.1, Linux downloads
 use statically linked musl and run on both glibc and musl distributions. No libc
@@ -41,9 +42,9 @@ Unix sockets and Unix file permissions; use a Linux server or Linux VM.
 ```sh
 # Verify on Linux (on macOS, run shasum -a 256 on the archive and compare its entry).
 sha256sum --ignore-missing -c SHA256SUMS
-tar -xzf cowork-relay-0.1.1-linux-x64.tar.gz
+tar -xzf cowork-relay-0.2.0-linux-x64.tar.gz
 mkdir -p "$HOME/.local/bin"
-install -m 0755 cowork-relay-0.1.1-linux-x64/cowork-relay "$HOME/.local/bin/cowork-relay"
+install -m 0755 cowork-relay-0.2.0-linux-x64/cowork-relay "$HOME/.local/bin/cowork-relay"
 "$HOME/.local/bin/cowork-relay" --version
 ```
 
@@ -215,7 +216,7 @@ sockets, 128 online computers, 256 streams in total, 32 streams per computer and
 8 per client. Each active data stream consumes a phone socket and a computer
 socket; the total socket limit also includes control connections. Admission is
 additionally limited to 64 concurrent TLS/HTTP handshakes. Change settings while
-stopped and restart. The CLI is local administration, not a persistent audit log.
+stopped and restart. The CLI provides local administration. Rejection logs are described below.
 
 Data messages are bounded to 64 KiB. Idle streams close after 90 seconds and all
 streams reconnect after at most one hour. Clients must reconcile command status
@@ -239,7 +240,7 @@ Back up the private state securely; restoring an old device registry can undo
 later revocations. Avoid copying a live registry into a second running service.
 
 `GET /health/live` returns process health over verified HTTPS without exposing
-device data. TLS keys and configuration are read at startup. SIGINT/SIGTERM closes
+device data. TLS certificates and keys can reload; other configuration is read at startup. SIGINT/SIGTERM closes
 connections; clients may reconnect once the service returns.
 
 Container and systemd templates are in [deploy](deploy/). Review paths and network
@@ -279,9 +280,27 @@ certificate's expiry and renewal setting. Private roots are never automatically
 replaced: a root nearing expiry requires an administrator and new trust imports.
 Keep the private CA signing key available and restrict the state directory.
 
-Use the companion renewal-capable desktop, mobile app and Server
-`0.0.6-renewal.0` or later together. This section describes unreleased source;
-existing published binaries and TestFlight builds do not gain it automatically.
+Use Cowork desktop 0.16.0, Server 0.0.6 and a renewal-capable mobile app
+(iOS TestFlight 0.0.1 build 33 or later) together. Upgrade each component;
+updating the relay alone does not add renewal support to older clients.
 Back up the stopped private state before upgrading: the new registration format
 is not readable by older relay binaries. Restore binary and matching backup
 together if rolling back.
+
+## Rejection logs
+
+The service writes JSON rejection events to stderr on a separate worker. Each
+event contains a fixed reason, the socket source IP, server time and bilingual
+message. It never includes request paths, headers, credentials or business data.
+For each reason, at most four samples are queued per 30-second window, followed
+by a total count. Delivery is best effort: a full or unavailable log output may
+drop samples without delaying connection processing. Configure log retention
+and access controls with your service manager; source IPs are operational data.
+
+This release adds no per-IP request quota or bandwidth limit and preserves the
+existing capacity settings. Log sampling does not reject or block requests.
+With the supplied systemd unit, read the logs using:
+
+```sh
+journalctl -u cowork-relay --since today
+```

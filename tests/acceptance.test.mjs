@@ -15,6 +15,32 @@ const schema = JSON.parse(readFileSync(require.resolve('@cowork/protocol/relay/c
 const validate = new Ajv2020({ strict: true }).compile(schema);
 const waitClosed = socket => new Promise(resolve => { if (socket.destroyed) resolve(); else socket.once('close', resolve); });
 
+test('rejection audit stays bounded and never blocks later valid connections from the same IP', { timeout: 40_000 }, async t => {
+  const f = await fixture(); t.after(f.cleanup);
+  const host = f.enroll('host', 'audit');
+  const sentinel = host.secret;
+  for (let index = 0; index < 50; index++) {
+    const response = await f.request(`GET /unknown?credential=${sentinel} HTTP/1.1\r\nHost: 127.0.0.1:${f.port}\r\nAuthorization: Bearer ${host.device.id}.${sentinel}\r\n\r\n`);
+    assert.equal(response.status, 403); response.socket.destroy();
+  }
+  const control = await f.control(host);
+  assert.equal(control.ready.hostId, host.device.id);
+  const health = await f.request(`GET /health/live HTTP/1.1\r\nHost: 127.0.0.1:${f.port}\r\n\r\n`);
+  assert.equal(health.status, 200); health.socket.destroy();
+  for (let retry = 0; retry < 30 && !f.logs().includes('relay.security'); retry++) await delay(30);
+  const records = f.logs().split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line));
+  const samples = records.filter(value => value.event === 'relay.security' && value.reason === 'request_rejected');
+  assert.ok(samples.length > 0 && samples.length <= 4);
+  for (const record of samples) {
+    assert.equal(record.sourceIp, '127.0.0.1');
+    assert.deepEqual(Object.keys(record).sort(), ['at', 'event', 'message', 'reason', 'sourceIp']);
+    assert.equal(typeof record.message.en, 'string');
+    assert.equal(typeof record.message['zh-CN'], 'string');
+  }
+  assert.equal(f.logs().includes(sentinel), false);
+  assert.equal(f.logs().includes('/unknown'), false);
+});
+
 test('vendored contract bytes match the pinned upstream package', () => {
   assert.deepEqual(readFileSync('vendor/relay/control.schema.json'), readFileSync(require.resolve('@cowork/protocol/relay/control')));
   for (const [path, digest] of Object.entries(JSON.parse(readFileSync('vendor/digests.json')))) {

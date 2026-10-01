@@ -1,4 +1,5 @@
 use crate::{
+    audit::{Audit, Kind},
     config::authority,
     runtime::{HostLease, Runtime, Socket, StreamLease, TICKET_SECONDS},
 };
@@ -48,6 +49,7 @@ pub async fn serve(
     let mut refresh = tokio::time::interval(Duration::from_secs(60));
     let permits = Arc::new(Semaphore::new(runtime.config.limits.sockets));
     let admissions = Arc::new(Semaphore::new(64));
+    let audit = Audit::start();
     loop {
         let (stream, peer) = tokio::select! {
             _ = runtime.shutdown.cancelled() => break,
@@ -66,34 +68,62 @@ pub async fn serve(
             value = listener.accept() => value?,
         };
         let Ok(permit) = permits.clone().try_acquire_owned() else {
+            audit.record(Kind::SocketCapacity, peer.ip());
             drop(stream);
             continue;
         };
         let permit = Arc::new(permit);
         let Ok(admission) = admissions.clone().try_acquire_owned() else {
+            audit.record(Kind::AdmissionCapacity, peer.ip());
             drop(stream);
             continue;
         };
         let relay = runtime.clone();
         let acceptor = acceptor.clone();
+        let audit = audit.clone();
         runtime.tasks.spawn(async move {
             let _admission = admission;
             let _ = stream.set_nodelay(true);
             let operation = async {
-                let tls = timeout(HEADER_TIMEOUT, acceptor.accept(stream)).await??;
+                let tls = match timeout(HEADER_TIMEOUT, acceptor.accept(stream)).await {
+                    Ok(Ok(tls)) => tls,
+                    result => {
+                        audit.record(
+                            if result.is_err() {
+                                Kind::TlsTimeout
+                            } else {
+                                Kind::TlsRejected
+                            },
+                            peer.ip(),
+                        );
+                        return Ok::<(), anyhow::Error>(());
+                    }
+                };
                 let service_relay = relay.clone();
+                let service_audit = audit.clone();
                 let service = service_fn(move |req| {
                     let relay = service_relay.clone();
                     let permit = permit.clone();
+                    let audit = service_audit.clone();
                     async move {
-                        Ok::<_, Infallible>(
-                            route(relay, req, peer, permit)
-                                .await
-                                .unwrap_or_else(|_| error(StatusCode::FORBIDDEN, "relay.denied")),
-                        )
+                        let reply = route(relay, req, peer, permit)
+                            .await
+                            .unwrap_or_else(|_| error(StatusCode::FORBIDDEN, "relay.denied"));
+                        let kind = match reply.status() {
+                            StatusCode::FORBIDDEN => Some(Kind::RequestRejected),
+                            StatusCode::PROXY_AUTHENTICATION_REQUIRED => {
+                                Some(Kind::AuthenticationRequired)
+                            }
+                            StatusCode::SERVICE_UNAVAILABLE => Some(Kind::TargetUnavailable),
+                            _ => None,
+                        };
+                        if let Some(kind) = kind {
+                            audit.record(kind, peer.ip());
+                        }
+                        Ok::<_, Infallible>(reply)
                     }
                 });
-                hyper::server::conn::http1::Builder::new()
+                let served = hyper::server::conn::http1::Builder::new()
                     .keep_alive(true)
                     .max_headers(32)
                     .max_buf_size(16 * 1024)
@@ -101,7 +131,10 @@ pub async fn serve(
                     .header_read_timeout(HEADER_TIMEOUT)
                     .serve_connection(TokioIo::new(tls), service)
                     .with_upgrades()
-                    .await?;
+                    .await;
+                if served.is_err() {
+                    audit.record(Kind::HttpRejected, peer.ip());
+                }
                 Ok::<(), anyhow::Error>(())
             };
             tokio::select! { _ = relay.shutdown.cancelled() => {}, _ = operation => {} }
