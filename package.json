@@ -1,6 +1,6 @@
 {
   "name": "cowork-relay",
-  "version": "0.3.0-notifications.0",
+  "version": "0.3.0",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
@@ -12,7 +12,7 @@
     "test:acceptance": "node --test tests/*.test.mjs"
   },
   "devDependencies": {
-    "@cowork/protocol": "file:vendor/cowork-protocol-0.0.8-notifications.1.tgz",
+    "@cowork/protocol": "file:vendor/cowork-protocol-0.0.8.tgz",
     "ajv": "8.20.0",
     "ws": "8.21.3"
   }
