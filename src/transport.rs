@@ -236,6 +236,80 @@ async fn route(
     for name in ["cookie", "origin", "referer", "transfer-encoding", "expect"] {
         ensure!(single(&req, name)?.is_none(), "Forbidden header");
     }
+    if req.uri().path() == crate::protocol::PUSH_STATUS_PATH
+        || req.uri().path() == crate::protocol::PUSH_SEND_PATH
+    {
+        ensure!(
+            req.uri().scheme().is_none()
+                && req.uri().authority().is_none()
+                && req.uri().query().is_none()
+                && single(&req, "host")? == Some(authority(&runtime.config.origin)?.0.as_str())
+                && single(&req, "upgrade")?.is_none(),
+            "Invalid push target"
+        );
+        let (id, secret) = credentials(&req, false)?;
+        {
+            let core = runtime
+                .core
+                .lock()
+                .map_err(|_| anyhow::anyhow!("State unavailable"))?;
+            let device = core
+                .registry
+                .authenticate(&id, &secret)
+                .context("Access denied")?;
+            ensure!(
+                device.role == crate::store::Role::Host,
+                "Host registration required"
+            );
+        }
+        let result = if req.uri().path() == crate::protocol::PUSH_STATUS_PATH {
+            ensure!(
+                req.method() == Method::GET
+                    && single(&req, "content-length")?.is_none_or(|v| v == "0"),
+                "Invalid push status request"
+            );
+            runtime.push.status()
+        } else {
+            ensure!(
+                req.method() == Method::POST
+                    && single(&req, "content-type")? == Some("application/json"),
+                "Invalid push request"
+            );
+            let length: usize = single(&req, "content-length")?
+                .context("Missing length")?
+                .parse()?;
+            ensure!((1..=4096).contains(&length), "Invalid push length");
+            let body = timeout(
+                HEADER_TIMEOUT,
+                http_body_util::BodyExt::collect(http_body_util::Limited::new(
+                    req.into_body(),
+                    4096,
+                )),
+            )
+            .await?
+            .map_err(|_| anyhow::anyhow!("Invalid push body"))?
+            .to_bytes();
+            ensure!(body.len() == length, "Invalid body length");
+            let value: serde_json::Value = serde_json::from_slice(&body)?;
+            ensure!(crate::push::validate(&value), "Invalid push payload");
+            {
+                let core = runtime
+                    .core
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("State unavailable"))?;
+                ensure!(
+                    core.registry.authenticate(&id, &secret).is_some(),
+                    "Access changed"
+                );
+            }
+            serde_json::json!({"status":runtime.push.send(&id, &value).await})
+        };
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .header("cache-control", "no-store")
+            .body(Full::new(Bytes::from(serde_json::to_vec(&result)?)))?);
+    }
     ensure!(
         single(&req, "content-length")?.is_none_or(|v| v == "0"),
         "Request bodies are forbidden"

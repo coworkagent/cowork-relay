@@ -238,3 +238,37 @@ CA 和地址保持不变，无需重新导入登记。私有配置的 `autoRenew
 ```sh
 journalctl -u cowork-relay --since today
 ```
+
+## 可选 Apple 通知服务（源码候选版）
+
+尚未发布的 0.3.0 通知候选版可为配套 Cowork 版本发送通用 iOS 提醒，公开的
+0.2.0 二进制不包含此功能。业务 TLS 仍保持不透明；独立通知入口只接受通过
+认证且处于有效状态的电脑登记所发送的有限事件元数据，手机登记不能发送
+通知。未配置时通知状态为不可用，原有连接中继仍可工作。
+
+停止服务，在现有私有 `config.json` 中添加可选的 `apns` 对象，再启动服务。
+保留其余配置，例如：
+
+```json
+{
+  "apns": {
+    "keyId": "ABCDEFGHIJ",
+    "teamId": "ABCDEFGHIJ",
+    "topic": "com.coworkagent.mobile",
+    "keyFile": "/absolute/private/AuthKey.p8",
+    "environment": "production"
+  }
+}
+```
+
+使用属于该应用团队且启用 Apple 推送的 P-256 PKCS#8 密钥，App Store Connect
+API 密钥不能替代。密钥放在仓库之外的私有目录中，由服务账户持有，文件权限
+设为 `0600`；密钥始终留在中继端。App Store/TestFlight 令牌选择 `production`，
+开发令牌选择 `sandbox`；单实例配置一个应用标识和一个环境。手机签名描述文件
+必须包含匹配的推送权限。
+
+服务只请求固定的 Apple HTTPS 地址，请求方不能指定网址、通知正文或签名密钥。
+可选通知服务与 Apple 可看到设备令牌及路由标识，不接收任务正文或文件。服务
+生成中英文通用提醒，最多保留五分钟。重复或结果未知的发送不自动重试；容量
+限制或电脑离线可能导致提醒丢弃。服务端接受不代表设备已经收到。部署前需用
+真机验证后台、锁屏送达和点击定位。本版不包含 Android 推送。

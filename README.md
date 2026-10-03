@@ -304,3 +304,43 @@ With the supplied systemd unit, read the logs using:
 ```sh
 journalctl -u cowork-relay --since today
 ```
+
+## Optional Apple notification provider (source candidate)
+
+The unpublished 0.3.0 notification candidate can send generic iOS alerts for
+matching Cowork builds. The public 0.2.0 binaries do not include this feature.
+Business TLS remains opaque; this separate endpoint accepts only bounded event
+metadata from an authenticated, active host registration. Phone registrations
+cannot send alerts. Without configuration, notification status is unavailable
+and the connection relay continues working.
+
+Stop the service and add an optional `apns` object to the existing private
+`config.json`, then restart. Preserve all other configuration. For example:
+
+```json
+{
+  "apns": {
+    "keyId": "ABCDEFGHIJ",
+    "teamId": "ABCDEFGHIJ",
+    "topic": "com.coworkagent.mobile",
+    "keyFile": "/absolute/private/AuthKey.p8",
+    "environment": "production"
+  }
+}
+```
+
+Use an Apple push-enabled P-256 PKCS#8 key belonging to the topic's team; an App
+Store Connect API key is not interchangeable. Keep the key outside the checkout
+in a private directory with file mode `0600`, owned by the service account. The
+key stays on the relay. Use `production` for App Store/TestFlight tokens and
+`sandbox` for development tokens; one instance has one topic and environment.
+The mobile signing profile must include the matching push entitlement.
+
+Only fixed Apple HTTPS endpoints are contacted. Requests never supply a URL,
+message body or signing key. Device tokens and routing identifiers are visible
+to this optional provider and Apple; task text and files are not sent. The
+service constructs Chinese or English generic alert text and limits expiry to
+five minutes. Duplicate/uncertain sends are not retried; capacity limits and
+offline hosts can drop alerts. Provider acceptance is not proof of device
+delivery. Validate background, lock-screen and tap routing on a real device
+before deploying the feature. Android push is not included.

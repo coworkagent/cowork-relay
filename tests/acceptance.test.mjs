@@ -230,3 +230,21 @@ test('renewal keeps registration identity and status reads cannot grant tunnel a
   const certificate = f.cli('status').certificate;
   assert.equal(certificate.autoRenew, true); assert.ok(certificate.expiresAt > Date.now() / 1000);
 });
+
+test('notification routes require active Host identity and reject custom content and targets', { timeout: 40_000 }, async t => {
+  const f = await fixture(); t.after(f.cleanup);
+  const host = f.enroll('host', 'push');
+  const client = f.enroll('client', 'push', host.device.id);
+  const request = async (method, path, device, value) => {
+    const body = value === undefined ? '' : JSON.stringify(value);
+    const response = await f.request(`${method} ${path} HTTP/1.1\r\nHost: 127.0.0.1:${f.port}\r\n${device ? `Authorization: Bearer ${device.device.id}.${device.secret}\r\n` : ''}${body ? `Content-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n` : ''}\r\n${body}`);
+    response.socket.destroy(); return response;
+  };
+  for (const identity of [undefined, client]) assert.equal((await request('GET', '/relay/v1/push/status', identity)).status, 403);
+  assert.equal((await request('GET', '/relay/v1/push/status', host)).status, 200);
+  const value = { token: 'a'.repeat(64), environment: 'sandbox', locale: 'en', kind: 'completed', hostId: 'host', sessionId: 'session', eventId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', expiresAt: Math.floor(Date.now() / 1000) + 60 };
+  assert.equal((await request('POST', '/relay/v1/push/send', host, value)).status, 200);
+  for (const extra of [{ body: 'private content' }, { url: 'https://evil.invalid' }, { action: 'approve' }, { token: 'x'.repeat(5000) }]) assert.equal((await request('POST', '/relay/v1/push/send', host, { ...value, ...extra })).status, 403);
+  assert.equal(f.logs().includes(value.token), false);
+  assert.equal(f.logs().includes(host.secret), false);
+});

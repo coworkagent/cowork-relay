@@ -45,6 +45,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     generated.push_str(&format!(
         "pub const REGISTRATION_STATUS_PATH: &str = {status_path:?};\n"
     ));
+    for (constant, definition) in [
+        ("PUSH_STATUS_PATH", "pushStatusPath"),
+        ("PUSH_SEND_PATH", "pushSendPath"),
+    ] {
+        let path = config["$defs"][definition]["const"]
+            .as_str()
+            .ok_or("Missing push path")?;
+        generated.push_str(&format!("pub const {constant}: &str = {path:?};\n"));
+    }
     fs::write(
         Path::new(&std::env::var("OUT_DIR")?).join("relay_constants.rs"),
         generated,

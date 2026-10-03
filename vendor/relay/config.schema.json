@@ -319,6 +319,104 @@
     },
     "registrationStatusPath": {
       "const": "/relay/v1/registration"
+    },
+    "pushStatusPath": {
+      "const": "/relay/v1/push/status"
+    },
+    "pushSendPath": {
+      "const": "/relay/v1/push/send"
+    },
+    "pushStatus": {
+      "type": "object",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "environment": {
+          "enum": [
+            "sandbox",
+            "production",
+            null
+          ]
+        }
+      },
+      "required": [
+        "available",
+        "environment"
+      ],
+      "additionalProperties": false
+    },
+    "pushRequest": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64,256}$"
+        },
+        "environment": {
+          "enum": [
+            "sandbox",
+            "production"
+          ]
+        },
+        "locale": {
+          "enum": [
+            "zh-CN",
+            "en"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "completed",
+            "failed",
+            "attention"
+          ]
+        },
+        "hostId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "sessionId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "eventId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "expiresAt": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "token",
+        "environment",
+        "locale",
+        "kind",
+        "hostId",
+        "sessionId",
+        "eventId",
+        "expiresAt"
+      ],
+      "additionalProperties": false
+    },
+    "pushResult": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "accepted",
+            "invalid-token",
+            "unavailable",
+            "rate-limited"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "additionalProperties": false
     }
   }
 }

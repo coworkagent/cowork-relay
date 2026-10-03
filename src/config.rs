@@ -21,6 +21,8 @@ use x509_parser::{extensions::GeneralName, prelude::FromDer};
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Config {
     pub format: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apns: Option<crate::push::ApnsConfig>,
     #[serde(default = "default_certificate_renewal")]
     pub auto_renew_certificate: bool,
     pub origin: String,
@@ -118,6 +120,9 @@ impl Config {
         let config: Self = serde_json::from_slice(&read_private(&directory.join("config.json"))?)?;
         ensure!(config.format == 1, "Unsupported configuration");
         authority(&config.origin)?;
+        if let Some(apns) = &config.apns {
+            apns.validate()?;
+        }
         let l = &config.limits;
         ensure!(
             (8..=4096).contains(&l.sockets)
@@ -244,6 +249,7 @@ pub fn init_ip(directory: &Path, ip: IpAddr, port: u16, listen: SocketAddr) -> R
         &directory,
         Config {
             format: 1,
+            apns: None,
             auto_renew_certificate: true,
             origin,
             listen,
@@ -269,6 +275,7 @@ pub fn init_domain(
     );
     let config = Config {
         format: 1,
+        apns: None,
         auto_renew_certificate: true,
         origin,
         listen,

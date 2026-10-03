@@ -24,6 +24,7 @@ pub type Attachment = (Socket, Arc<OwnedSemaphorePermit>);
 pub const TICKET_SECONDS: u64 = crate::protocol::TICKET_SECONDS as u64;
 
 pub struct Runtime {
+    pub push: crate::push::PushGateway,
     pub config: Config,
     pub certificate_status: Mutex<serde_json::Value>,
     pub shutdown: CancellationToken,
@@ -246,6 +247,7 @@ impl Core {
 impl Runtime {
     pub fn new(config: Config, registry: Registry) -> Arc<Self> {
         Arc::new(Self {
+            push: crate::push::PushGateway::new(config.apns.clone()),
             certificate_status: Mutex::new(
                 serde_json::json!({"expiresAt":config.certificate_expiry().ok(),"autoRenew":config.automatic_certificate_renewal()}),
             ),

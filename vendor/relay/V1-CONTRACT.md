@@ -156,3 +156,28 @@ Remote v1 `access.lease.v1` is explicitly negotiated. A supporting hello contain
 `access` with the desktop-authoritative expiry and renewal policy. Renewal never
 changes grants or resurrects revoked devices. Invitation expiry remains separate
 from device access expiry. Old peers receive no new hello result fields.
+
+## Optional notification provider
+
+A relay administrator may configure an APNs signing key, topic and environment.
+The key remains on the relay. Authenticated, active Host registrations may read
+`/relay/v1/push/status` and POST `/relay/v1/push/send`. Client registrations may
+not call either endpoint. The exact request and result definitions are in
+`config.schema.json`. No caller-defined text, topic, target URL, command or
+approval is accepted. The provider constructs bilingual generic alerts and
+includes only opaque Host, session and event identifiers for navigation.
+
+The Host stores native device tokens in its OS-sealed notification registry,
+checks the current device grant before each send, and expires opt-ins after
+seven days without renewal. Notification registration uses the optional
+`notifications.push.v1` capability, revision comparison and explicit disable.
+Changing grants invalidates the registration; enabling it again requires a
+fresh authorized request. A notification is never authority to read or act.
+Opening it must use the saved paired identity, reconnect and synchronize under
+current grants. Pending actions always require the normal interactive flow.
+
+Provider requests have a 4 KiB limit, a maximum five-minute lifetime, bounded
+rate and concurrency limits, and event deduplication. Acceptance means APNs
+accepted the request; it does not prove delivery or that the user read it.
+No automatic retry is made after an uncertain delivery. Relay tunneling keeps
+business TLS opaque; this opt-in channel does not carry task text or files.

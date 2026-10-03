@@ -1,6 +1,6 @@
 [package]
 name = "cowork-relay"
-version = "0.2.0"
+version = "0.3.0-notifications.0"
 edition = "2024"
 publish = false
 description = "Self-hosted encrypted connection relay for Cowork devices"
@@ -16,6 +16,9 @@ http-body-util = "0.1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 rand = "0.9"
+ring = "0.17"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "json"] }
+jsonschema = { version = "0.33", default-features = false }
 rcgen = { version = "0.14", features = ["pem", "x509-parser"] }
 rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
 rustls-pemfile = "2"
